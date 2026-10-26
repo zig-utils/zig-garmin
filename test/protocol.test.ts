@@ -31,6 +31,9 @@ class Watch implements GarminTransport {
   badOffset = false
   drop = false
   archived = false
+  tx: number[] = []
+  compressed = false
+  sequences: Array<number | undefined> = []
   entry = new Uint8Array(16)
   file = Uint8Array.of(1, 2, 0, 4, 5)
   constructor() {
@@ -39,20 +42,37 @@ class Watch implements GarminTransport {
     v.setUint32(8, this.file.length, true); v.setUint32(12, 100, true)
   }
   push(type: number, payload: Uint8Array) {
-    const wire = cobsEncode(gfdiFrame(type, payload))
+    const wire = cobsEncode(gfdiFrame(this.compressed ? (141 << 8) | (type - 5000) : type, payload))
     // Coalesced frames and fragmentation both occur on actual BLE links.
-    this.queue.push(Uint8Array.of(0x90, ...wire.slice(0, 4)))
-    this.queue.push(Uint8Array.of(0x90, ...wire.slice(4)))
+    this.queue.push(Uint8Array.of(1, ...wire.slice(0, 4)))
+    this.queue.push(Uint8Array.of(1, ...wire.slice(4)))
   }
   async write(bytes: Uint8Array) {
+    expect(bytes.length).toBeLessThanOrEqual(20)
     if (!bytes[0]) {
-      if (bytes[1] === 5) this.queue.push(Uint8Array.of(0, 6))
+      if (bytes[1] === 5) {
+        expect([...bytes]).toEqual([0, 5, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+        this.queue.push(Uint8Array.of(0, 6))
+      }
       else {
-        const reply = new Uint8Array(14); reply[1] = 1; reply.set(bytes.slice(10, 12), 10); reply[13] = 1; this.queue.push(reply)
+        const reply = new Uint8Array(16)
+        reply[1] = 1
+        reply.set(bytes.slice(10, 12), 10)
+        reply[13] = bytes[10] === 4 ? 2 : 1
+        reply[15] = 1
+        this.queue.push(reply)
       }
       return
     }
-    const message = parseMessage(cobsDecode(bytes.slice(1)))
+    if (bytes[0] === 2) {
+      this.queue.push(Uint8Array.of(2, 3, 0, 0, 0, 0, 0xd2, 4, 0, 0))
+      return
+    }
+    this.tx.push(...bytes.slice(1))
+    if (this.tx.length < 3 || this.tx[this.tx.length - 1] !== 0) return
+    const message = parseMessage(cobsDecode(Uint8Array.from(this.tx)))
+    this.tx = []
+    if (message.type === 5000) this.sequences.push(message.sequence)
     if (message.type === 5008) this.archived = true
     if (message.type !== 5002) return
     const index = new DataView(message.payload.buffer).getUint16(0, true)
@@ -79,6 +99,7 @@ describe('historical transfers', () => {
   test('verifies fragmented files, retains watch data and supports replay deduplication', async () => {
     const watch = new Watch(); const client = new GarminBleClient(watch, portableCodec)
     await client.open()
+    expect(client.unitId).toBe('1234')
     const saved: Uint8Array[] = []
     expect(await client.sync({ onFile: async f => { saved.push(f.bytes) } })).toEqual({ files: 1, remaining: 0 })
     expect(saved).toEqual([watch.file]); expect(watch.archived).toBe(false)
@@ -101,4 +122,20 @@ describe('historical transfers', () => {
     const result = await client.sync({ maxBytes: 1, onFile: async () => { throw new Error('Over budget') } })
     expect(result).toEqual({ files: 0, remaining: 1 })
   })
+})
+
+test('documented compressed GFDI captures retain response sequence numbers', () => {
+  const message = parseMessage(Uint8Array.from([0x09, 0, 0x08, 0x98, 0x28, 0x01, 0x10, 0xd7, 0xf5]))
+  expect(message.type).toBe(5008)
+  expect(message.sequence).toBe(24)
+})
+
+test('compressed watch requests receive ACKs using the same sequence', async () => {
+  const watch = new Watch()
+  watch.compressed = true
+  const client = new GarminBleClient(watch)
+  await client.open()
+  await client.sync({ onFile: async () => {} })
+  expect(watch.sequences).toEqual([13, 13])
+  await client.close()
 })

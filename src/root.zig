@@ -82,11 +82,11 @@ pub fn frame(kind: u16, payload: []const u8, out: []u8) Error![]u8 {
     return out[0..size];
 }
 
-pub const Message = struct { kind: u16, payload: []const u8 };
+pub const Message = struct { kind: u16, payload: []const u8, sequence: ?u5 = null };
 pub fn parse(bytes: []const u8) Error!Message {
     if (bytes.len < 6 or bytes.len > max_frame or std.mem.readInt(u16, bytes[0..2], .little) != bytes.len) return error.Malformed;
     if (crc16(bytes, 0) != 0) return error.Checksum;
-    return .{ .kind = std.mem.readInt(u16, bytes[2..4], .little), .payload = bytes[4 .. bytes.len - 2] };
+    return .{ .kind = if (bytes[3] & 128 != 0) @as(u16, 5000) + bytes[2] else std.mem.readInt(u16, bytes[2..4], .little), .payload = bytes[4 .. bytes.len - 2], .sequence = if (bytes[3] & 128 != 0) @truncate(bytes[3]) else null };
 }
 
 pub const Service = enum(u16) { gfdi = 1, registration = 4, heart_rate = 6, steps = 7, calories = 8, intensity = 10, rr_interval = 12, stress = 13, accelerometer = 16, spo2 = 19, body_battery = 20, respiration = 21 };
@@ -108,9 +108,10 @@ pub fn telemetry(service: Service, bytes: []const u8) Error!Reading {
     if (bytes.len < size) return error.Malformed;
     switch (service) {
         .heart_rate => {
+            if (bytes[1] == 0 or bytes[1] == 255) return error.Malformed;
             r.values[0] = @floatFromInt(bytes[1]);
             r.values[1] = @floatFromInt(bytes[2]);
-            r.count = 2;
+            r.count = if (bytes[2] > 0 and bytes[2] < 255) 2 else 1;
         },
         .steps, .calories => {
             r.values[0] = @floatFromInt(uint(bytes, 0, u32));
@@ -123,6 +124,7 @@ pub fn telemetry(service: Service, bytes: []const u8) Error!Reading {
             r.count = 2;
         },
         .rr_interval => {
+            if (uint(bytes, 0, u16) == 0 or uint(bytes, 0, u16) == 65535) return error.Malformed;
             r.values[0] = @floatFromInt(uint(bytes, 0, u16));
             r.count = 1;
         },

@@ -57,9 +57,9 @@ export function gfdiFrame(type: number, payload: Uint8Array): Uint8Array {
   return out
 }
 export const portableCodec: Codec = { crc: crc16, encode: cobsEncode, decode: cobsDecode, frame: gfdiFrame }
-export interface Message { type: number, payload: Uint8Array }
+export interface Message { type: number, payload: Uint8Array, sequence?: number }
 export function parseMessage(bytes: Uint8Array, codec: Codec = portableCodec): Message {
   if (bytes.length < 6 || bytes.length > 65535 || new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint16(0, true) !== bytes.length) throw new Error('Invalid GFDI length')
   if (codec.crc(bytes) !== 0) throw new Error('GFDI checksum mismatch')
-  return { type: new DataView(bytes.buffer, bytes.byteOffset).getUint16(2, true), payload: bytes.slice(4, -2) }
+  return { type: bytes[3]! & 128 ? 5000 + bytes[2]! : new DataView(bytes.buffer, bytes.byteOffset).getUint16(2, true), payload: bytes.slice(4, -2), ...(bytes[3]! & 128 ? { sequence: bytes[3]! & 31 } : {}) }
 }

@@ -1,6 +1,6 @@
 .{
     .name = .zig_garmin,
-    .version = "0.1.1",
+    .version = "0.1.2",
     .fingerprint = 0xd33db7ee896edd95,
     .minimum_zig_version = "0.16.0",
     .dependencies = .{},

@@ -1,6 +1,6 @@
 {
   "name": "@zig-utils/garmin",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "description": "Garmin Bluetooth protocol and health sync with a dependency-free Zig codec",
   "author": "Chris Breuer <chris@stacksjs.org>",

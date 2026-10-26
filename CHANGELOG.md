@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.2
+
+- Negotiate documented ML registration replies and query the watch identity.
+- Preserve compressed GFDI sequence numbers in acknowledgements.
+- Use the safe 20-byte legacy ML fragment limit and reject reliable MLR explicitly.
+- Correct CLOSE_ALL field alignment and skip unavailable optional telemetry services.
+- Pin local Zig builds to the declared compiler.
+
 ## 0.1.1
 
 - Add native Zig session negotiation, telemetry events and read-only file-transfer state.

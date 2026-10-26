@@ -13,11 +13,11 @@ pub const Session = struct {
         self.used = 0;
     }
     pub fn closeAll(out: []u8) wire.Error![]u8 {
-        if (out.len < 13) return error.NoSpace;
-        @memset(out[0..13], 0);
+        if (out.len < 12) return error.NoSpace;
+        @memset(out[0..12], 0);
         out[1] = 5;
-        out[4] = 2;
-        return out[0..13];
+        out[2] = 2;
+        return out[0..12];
     }
     pub fn register(service: wire.Service, out: []u8) wire.Error![]u8 {
         if (out.len < 13) return error.NoSpace;
@@ -44,7 +44,7 @@ pub const Session = struct {
                 return;
             }
             if (packet[1] != 1) return;
-            if (packet.len != 14 or packet[12] != 0 or packet[13] == 0 or packet[13] > 127) return error.Malformed;
+            if (packet.len < 14 or packet.len > 16 or packet[12] != 0 or (packet.len > 14 and packet[14] != 0) or packet[13] == 0 or packet[13] > 127) return error.Malformed;
             const service = std.mem.readInt(u16, packet[10..12], .little);
             const handle = packet[13];
             if (self.handles[handle] != null and self.handles[handle] != service) return error.Malformed;
@@ -55,7 +55,8 @@ pub const Session = struct {
             try callback(context, Event{ .registered = .{ .service = service, .handle = handle } });
             return;
         }
-        const handle = if (packet[0] & 128 != 0) (packet[0] >> 4) & 7 else packet[0];
+        if (packet[0] & 128 != 0) return error.Malformed;
+        const handle = packet[0];
         const code = self.handles[handle] orelse return error.Malformed;
         if (code != 1) {
             const service = std.enums.fromInt(wire.Service, code) orelse return error.Malformed;
@@ -96,6 +97,6 @@ test "session negotiates handles and decodes live telemetry" {
     var session: Session = .{};
     var response = [_]u8{ 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 6, 0, 0, 2 };
     try session.accept(&response, &host, Host.event);
-    try session.accept(&.{ 0xa0, 0, 72, 51 }, &host, Host.event);
+    try session.accept(&.{ 2, 0, 72, 51 }, &host, Host.event);
     try std.testing.expectEqual(@as(u32, 1), host.count);
 }

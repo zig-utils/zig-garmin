@@ -35,7 +35,7 @@ export function parseTelemetry(service: number, bytes: Uint8Array, timestamp = D
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
   let values: number[]
   switch (service) {
-    case 6: if (bytes.length < 3 || !bytes[1] || bytes[1] === 255) return null; values = [bytes[1]!, bytes[2]!]; break
+    case 6: if (bytes.length < 3 || !bytes[1] || bytes[1] === 255) return null; values = [bytes[1]!, ...(bytes[2]! > 0 && bytes[2]! < 255 ? [bytes[2]!] : [])]; break
     case 7: case 8: if (bytes.length < 8) return null; values = [view.getUint32(0, true), view.getUint32(4, true)]; break
     case 10: if (bytes.length < 4) return null; values = [view.getUint16(0, true), view.getUint16(2, true)]; break
     case 12: if (bytes.length < 2) return null; values = [view.getUint16(0, true)]; if (!values[0] || values[0] === 65535) return null; break
@@ -61,6 +61,7 @@ const viewOf = (bytes: Uint8Array): DataView => new DataView(bytes.buffer, bytes
  * Legacy GFDI/ML supported; reliable MLR-only firmware fails explicitly. */
 export class GarminBleClient {
   private handles = new Map<number, number>()
+  private refused = new Set<number>()
   private partial: number[] = []
   private messages: Message[] = []
   private readings: GarminReading[] = []
@@ -81,15 +82,15 @@ export class GarminBleClient {
   private async write(handle: number, payload: Uint8Array): Promise<void> {
     if (this.closed) throw new Error('Garmin session closed')
     if (handle < 0 || handle > 127) throw new Error('Invalid Garmin handle')
-    for (let at = 0; at < payload.length; at += this.transport.maxWrite - 1) {
-      const chunk = payload.subarray(at, at + this.transport.maxWrite - 1)
+    for (let at = 0; at < payload.length; at += Math.min(20, this.transport.maxWrite) - 1) {
+      const chunk = payload.subarray(at, at + Math.min(20, this.transport.maxWrite) - 1)
       await this.transport.write(Uint8Array.of(handle, ...chunk))
     }
   }
-  private async send(type: number, payload = new Uint8Array()): Promise<void> {
+  private async send(type: number, payload = new Uint8Array(), sequence?: number): Promise<void> {
     const handle = this.handles.get(1)
     if (handle === undefined) throw new Error('Garmin GFDI channel unavailable')
-    await this.write(handle, this.codec.encode(this.codec.frame(type, payload)))
+    await this.write(handle, this.codec.encode(this.codec.frame(sequence === undefined ? type : ((128 | sequence) << 8) | (type - 5000), payload)))
   }
   private async receive(timeoutMs: number): Promise<void> {
     const packet = await this.transport.read(timeoutMs)
@@ -97,8 +98,10 @@ export class GarminBleClient {
     if (packet.length < 2 || packet.length > 65535) throw new Error('Invalid Garmin notification')
     if (packet[0] === 0) {
       if (packet[1] === 1) {
-        if (packet.length !== 14 || packet[12] !== 0 || packet[13]! > 127 || !packet[13]) throw new Error('Garmin refused service registration')
+        if (packet.length < 13 || packet.length > 16) throw new Error('Invalid Garmin registration response')
         const service = viewOf(packet).getUint16(10, true)
+        if (packet[12] !== 0) { this.refused.add(service); return }
+        if (packet.length < 14 || packet[13]! > 127 || !packet[13] || (packet[14] ?? 0) !== 0) throw new Error('Garmin requires an unsupported transport')
         const handle = packet[13]!
         if ([...this.handles.entries()].some(([other, assigned]) => other !== service && assigned === handle)) throw new Error('Garmin reused an active handle')
         this.handles.set(service, handle)
@@ -106,9 +109,14 @@ export class GarminBleClient {
       else if (packet[1] === 6) this.messages.push({ type: -1, payload: new Uint8Array() })
       return
     }
-    const handle = packet[0]! & 128 ? (packet[0]! >>> 4) & 7 : packet[0]!
+    if (packet[0]! & 128) throw new Error('Garmin reliable MLR transport is not supported by this session')
+    const handle = packet[0]!
     const service = [...this.handles.entries()].find(([, assigned]) => assigned === handle)?.[0]
     if (service === undefined) return
+    if (service === 4) {
+      if (packet[1] === 3 && packet.length >= 10) this.unitId = String(viewOf(packet).getUint32(6, true))
+      return
+    }
     if (service !== 1) {
       const reading = parseTelemetry(service, packet.subarray(1))
       if (reading) { if (this.readings.length >= 4096) this.readings.shift(); this.readings.push(reading) }
@@ -140,7 +148,7 @@ export class GarminBleClient {
       v.setUint16(0, 5052, true)
       v.setUint32(7, Math.floor(Date.now() / 1000) - 631065600, true)
       v.setInt32(11, -new Date().getTimezoneOffset() * 60, true)
-      await this.send(5000, out)
+      await this.send(5000, out, message.sequence)
     }
     else if (message.type === 5043 || message.type === 5044) {
       if (p.length < 14 || viewOf(p).getUint32(10, true) !== p.length - 14) throw new Error('Invalid Garmin protobuf envelope')
@@ -151,14 +159,14 @@ export class GarminBleClient {
       v.setUint32(5, viewOf(p).getUint32(2, true), true)
       // Acknowledge receipt, explicitly decline unsupported protobuf services.
       ack[10] = 1
-      await this.send(5000, ack)
+      await this.send(5000, ack, message.sequence)
     }
     else if (![5000, 5004].includes(message.type)) {
       const ack = new Uint8Array(3)
       viewOf(ack).setUint16(0, message.type, true)
       // ACK known informational messages; NAK unknown requests.
       ack[2] = [5024, 5030].includes(message.type) ? 0 : 1
-      await this.send(5000, ack)
+      await this.send(5000, ack, message.sequence)
     }
   }
   private async wait(test: (message: Message) => boolean, timeoutMs = 15000): Promise<Message> {
@@ -179,6 +187,7 @@ export class GarminBleClient {
     await this.write(0, payload)
     const end = Date.now() + 10000
     while (!this.handles.has(service)) {
+      if (this.refused.has(service)) throw Object.assign(new Error(`Garmin service ${service} is unavailable`), { code: 'UNSUPPORTED_SERVICE' })
       if (Date.now() >= end) throw new Error('Garmin service registration timed out')
       await this.receive(Math.max(1, end - Date.now()))
     }
@@ -187,10 +196,17 @@ export class GarminBleClient {
   open(): Promise<void> {
     return this.exclusive(async () => {
       if (this.opened) return
-      const reset = new Uint8Array(12)
-      reset[0] = 5; reset[3] = 2
+      const reset = new Uint8Array(11)
+      reset[0] = 5; reset[1] = 2
       await this.write(0, reset)
       await this.wait(m => m.type === -1)
+      const registration = await this.register(4)
+      await this.write(registration, Uint8Array.of(3))
+      const identityDeadline = Date.now() + 10000
+      while (this.unitId === null) {
+        if (Date.now() >= identityDeadline) throw new Error('Garmin identity timed out')
+        await this.receive(Math.max(1, identityDeadline - Date.now()))
+      }
       await this.register(1)
       await this.send(5030, Uint8Array.of(16, 0))
       this.opened = true
@@ -210,7 +226,8 @@ export class GarminBleClient {
     let offset = 0
     let crc = 0
     while (offset < size) {
-      const { payload } = await this.wait(m => m.type === 5004)
+      const message = await this.wait(m => m.type === 5004)
+      const { payload } = message
       if (payload.length < 8) throw new Error('Invalid Garmin file chunk')
       const v = viewOf(payload)
       const at = v.getUint32(3, true)
@@ -224,7 +241,7 @@ export class GarminBleClient {
       const ack = new Uint8Array(8)
       viewOf(ack).setUint16(0, 5004, true)
       viewOf(ack).setUint32(4, offset, true)
-      await this.send(5000, ack)
+      await this.send(5000, ack, message.sequence)
     }
     return out
   }
@@ -256,7 +273,14 @@ export class GarminBleClient {
       this.readings = []
       const started: number[] = []
       try {
-        for (const service of new Set(services)) { const handle = this.handles.get(service) ?? await this.register(service); await this.write(handle, Uint8Array.of(1)); started.push(handle) }
+        for (const service of new Set(services)) {
+          try {
+            const handle = this.handles.get(service) ?? await this.register(service)
+            await this.write(handle, Uint8Array.of(1))
+            started.push(handle)
+          }
+          catch (error) { if ((error as { code?: string }).code !== 'UNSUPPORTED_SERVICE') throw error }
+        }
         const end = Date.now() + durationMs
         while (Date.now() < end) {
           try { await this.receive(Math.min(1000, end - Date.now())) }
@@ -271,7 +295,7 @@ export class GarminBleClient {
     if (this.closed) return
     this.closed = true
     this.opened = false
-    this.partial = []; this.messages = []; this.handles.clear()
+    this.partial = []; this.messages = []; this.handles.clear(); this.refused.clear()
     await this.transport.close()
   }
 }
