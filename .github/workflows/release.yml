@@ -32,7 +32,15 @@ jobs:
       - name: Upload portable package
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "$GITHUB_REF_NAME" release/*.tgz --clobber
+        run: |
+          for archive in release/*.tgz; do
+            name="$(basename "$archive")"
+            if gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name' | grep -Fxq "$name"; then
+              echo "Preserving existing immutable asset $name"
+            else
+              gh release upload "$GITHUB_REF_NAME" "$archive"
+            fi
+          done
       - name: Publish to Pantry
         if: github.event_name == 'workflow_dispatch' && inputs.publish_to_pantry
         uses: home-lang/pantry/packages/action@main
