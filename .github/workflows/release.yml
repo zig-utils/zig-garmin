@@ -1,25 +1,40 @@
 name: Release
-
 on:
   push:
-    tags:
-      - 'v*'
-
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      publish_to_pantry:
+        description: Also publish to Pantry (requires a valid registry token)
+        type: boolean
+        default: false
 permissions:
   contents: write
-
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-
-      - name: Create Release
+        with:
+          fetch-depth: 0
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: '0.17.0-dev.1441+d5181a9c9'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.4'
+      - run: bun run build && bun test ./test
+      - run: mkdir -p release && bun pm pack --destination release
+      - name: Create release
         uses: stacksjs/action-releaser@v1.2.9
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
+      - name: Upload portable package
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$GITHUB_REF_NAME" release/*.tgz --clobber
       - name: Publish to Pantry
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_to_pantry
         uses: home-lang/pantry/packages/action@main
         with:
           publish: zig

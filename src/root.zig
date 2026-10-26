@@ -190,3 +190,10 @@ test "telemetry preserves RR intervals rather than inventing RMSSD" {
     try std.testing.expectError(error.Malformed, telemetry(.stress, &.{255}));
     try std.testing.expectError(error.Malformed, telemetry(.steps, &.{1}));
 }
+
+pub const transfer = @import("transfer.zig");
+pub const session = @import("session.zig");
+test {
+    _ = transfer;
+    _ = session;
+}

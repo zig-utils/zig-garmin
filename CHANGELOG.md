@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1
+
+- Add native Zig session negotiation, telemetry events and read-only file-transfer state.
+- Verify file offsets and rolling checksums before advancing download cursors.
+- Publish portable package archives through GitHub Releases.
+
 ## 0.1.0
 
 - Add allocation-free Zig CRC, COBS, GFDI and telemetry codecs.

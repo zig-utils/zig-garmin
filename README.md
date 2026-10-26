@@ -9,6 +9,7 @@ Experimental. Wire vectors, simulated transfers and failure cases are tested. Re
 Implemented:
 
 - Zig CRC-16/ARC, Garmin COBS, GFDI frame validation and telemetry decoding.
+- Native Zig session events, service registration, streaming controls, directory iteration and verified download assembly (`session` and `transfer` modules).
 - Zig static library and embedded WASM codec; native JS fallback for JavaScriptCore hosts without WebAssembly.
 - GFDI/ML service registration, live HR, RR intervals, steps, calories, intensity, stress, SpO2, Body Battery, respiration and packed accelerometer decoding.
 - Read-only historical directory and FIT downloads, rolling CRC and offset verification, bounded buffers, per-file checkpoints supplied by the consumer.
