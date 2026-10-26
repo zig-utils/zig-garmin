@@ -1,0 +1,31 @@
+{
+  "name": "@zig-utils/garmin",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Garmin Bluetooth protocol and health sync with a dependency-free Zig codec",
+  "author": "Chris Breuer <chris@stacksjs.org>",
+  "license": "MIT",
+  "repository": "https://github.com/zig-utils/zig-garmin",
+  "exports": {
+    ".": {
+      "types": "./bindings/index.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "bindings",
+    "src",
+    "build.zig",
+    "build.zig.zon",
+    "README.md",
+    "NOTICE.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "bun scripts/build.ts",
+    "test": "zig build test && bun test ./test",
+    "changelog": "changelog -o CHANGELOG.md",
+    "release:patch": "pantry release patch --yes"
+  }
+}

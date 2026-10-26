@@ -1,0 +1,4 @@
+dependencies:
+  bun.sh: 1.4.4
+  ziglang.org: 0.17.0-dev.1441+d5181a9c9
+  github.com/zig-utils/zig-changelog: ^0.1.1

@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }}, Zig ${{ matrix.zig-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        zig-version: ['0.17.0-dev.1441+d5181a9c9']
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v6
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: '0.17.0-dev.1441+d5181a9c9'
+      - run: zig build
+      - run: zig build test
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.4'
+      - run: bun run build
+      - run: bun test ./test
+
+  lint:
+    name: Format Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: '0.17.0-dev.1441+d5181a9c9'
+      - run: zig fmt --check .
